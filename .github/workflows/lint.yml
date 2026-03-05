@@ -164,49 +164,39 @@ jobs:
       - name: Check docstrings
         run: |
           echo "Verifying docstrings in all modules..."
-          python -c "
-import os
-import ast
+          python3 << 'EOF'
+          import os
+          import ast
 
-def check_docstrings(filepath):
-    """Verifica que todas las clases y funciones tengan docstring."""
-    with open(filepath, 'r', encoding='utf-8') as f:
-        try:
-            # AST = Abstract Syntax Tree = representación del código como árbol
-            tree = ast.parse(f.read())
-            # Recorre TODOS los nodos (clases, funciones, variables, etc)
-            for node in ast.walk(tree):
-                # Solo revisar definiciones de clase y función
-                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-                    # ast.get_docstring() obtiene el primer string (el docstring)
-                    # Si no existe docstring Y no es __init__ (método especial)
-                    # entonces retorna False (verificación falla)
-                    if not ast.get_docstring(node) and node.name != '__init__':
-                        return False
-        except SyntaxError:
-            # Si el archivo tiene sintaxis inválida, no puede parsearse
-            return False
-    return True
+          def check_docstrings(filepath):
+              with open(filepath, 'r', encoding='utf-8') as f:
+                  try:
+                      tree = ast.parse(f.read())
+                      for node in ast.walk(tree):
+                          if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                              if not ast.get_docstring(node) and node.name != '__init__':
+                                  return False
+                  except SyntaxError:
+                      return False
+              return True
 
-src_dir = 'src'
-missing_docs = []
+          src_dir = 'src'
+          missing_docs = []
 
-# Recorre todos los archivos en src/
-for root, dirs, files in os.walk(src_dir):
-    for file in files:
-        if file.endswith('.py'):
-            filepath = os.path.join(root, file)
-            if not check_docstrings(filepath):
-                missing_docs.append(filepath)
+          for root, dirs, files in os.walk(src_dir):
+              for file in files:
+                  if file.endswith('.py'):
+                      filepath = os.path.join(root, file)
+                      if not check_docstrings(filepath):
+                          missing_docs.append(filepath)
 
-# Reporta resultados
-if missing_docs:
-    print('Files with missing docstrings:')
-    for f in missing_docs:
-        print(f'  - {f}')
-else:
-    print('✓ All modules have proper docstrings')
-          "
+          if missing_docs:
+              print('Files with missing docstrings:')
+              for f in missing_docs:
+                  print(f'  - {f}')
+          else:
+              print('✓ All modules have proper docstrings')
+          EOF
 
 # ================================================================================
 # RESUMEN: Cómo funciona el workflow de Calidad de Código
