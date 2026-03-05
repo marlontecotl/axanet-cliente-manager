@@ -1,0 +1,233 @@
+# ==================================================================================
+# WORKFLOW DE CALIDAD DE CÓDIGO - LINTING Y VERIFICACIÓN DE ESTILO
+# ==================================================================================
+# Este workflow verifica que el código cumpla ESTÁNDARES DE CALIDAD.
+# Es diferente de Testing porque:
+# - Testing = ¿El código FUNCIONA? (comportamiento correcto)
+# - Linting = ¿El código está BIEN ESCRITO? (legible, mantenible, sin problemas)
+#
+# CONCEPTO: "Code Quality as a Service" - Automáticamente asegurar que TODO código
+# en el repositorio siga los mismos estándares (sin excusas, sin excepciones).
+# Un equipo donde TODO el código se ve igual es más mantenible y seguro.
+# ==================================================================================
+
+name: Code Quality
+
+# ================================================================================
+# SECCIÓN 'on': CUÁNDO se dispara este workflow
+# ================================================================================
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+      - 'release/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+
+# ================================================================================
+# JOBS: Trabajos paralelos de verificación de calidad
+# ================================================================================
+jobs:
+  # ===========================================================================
+  # JOB 1: LINT - Análisis de código estático
+  # ===========================================================================
+  # El linting detecta problemas sin ejecutar el código:
+  # - Código muerto (variables nunca usadas)
+  # - Sintaxis incorrecta
+  # - Nombres de variables confusos
+  # - Código que no sigue convenciones
+  # Se ejecuta en UNA sola versión de Python (no necesita matriz como testing)
+  # porque el análisis estático es independiente de la versión.
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          # Usamos 3.11 (última versión) porque queremos las mejores herramientas.
+          # El linting es independiente de versión, así que una es suficiente.
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ====================================================================
+      # PASO 1: Flake8 - PRIMERA PASADA (Errores críticos)
+      # ====================================================================
+      # Flake8 es un linter que combina:
+      # - PyFlakes (detecta errores reales)
+      # - Style (detecta mal estilo PEP8)
+      # - McCabe (detecta complejidad alta)
+      #
+      # RAZÓN POR DOS PASADAS:
+      # Primera pasada = SOLO ERRORES CRÍTICOS (no warnings)
+      # Si la primera falla, no tiene sentido revisar warnings.
+      #
+      # FLAGS PRIMERA PASADA:
+      # - '--select=E9,F63,F7,F82': Solo revisar estos códigos
+      #   * E9 = Errores de tiempo de ejecución (ej: identación inválida)
+      #   * F63 = Variables no definidas (ej: usa 'x' pero nunca la declara)
+      #   * F7 = Errores de sintaxis de función
+      #   * F82 = Undefined name (nombre no definido)
+      # - '--show-source': Muestra el código problemático (no solo "línea 42")
+      # - '--statistics': Resumen de problemas encontrados
+      #
+      # CONCEPTO: "Fail Fast on Critical" - Si hay errores críticos, detén todo.
+      # No tiene sentido revisar "línea muy larga" si el código ni siquiera compila.
+      - name: Run flake8
+        run: |
+          # PRIMERA PASADA: Solo errores críticos (la línea no puede fallar)
+          flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
+          # SEGUNDA PASADA: Todo incluyendo warnings (pero no bloquea con --exit-zero)
+          flake8 src tests --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      # ====================================================================
+      # EXPLICACIÓN SEGUNDA PASADA:
+      # ====================================================================
+      # FLAGS:
+      # - '--exit-zero': Aunque haya warnings, no falla el workflow
+      #   RAZÓN: Los warnings son sugerencias (línea larga, espacios extras).
+      #   Si un developer tiene una línea de 130 caracteres por buena razón,
+      #   no queremos bloquear toda la revisión. Los warnings se reportan
+      #   pero no bloquean. El developer los ve en el PR y decide si ajustar.
+      # - '--max-complexity=10': Una función no puede tener más de 10 "caminos"
+      #   (if/else/loops anidados). Funciones complejas son difíciles de testear.
+      # - '--max-line-length=127': Las líneas no deben exceder 127 caracteres
+      #   (límite de legibilidad; pantallas estándar tienen ~100-120 chars)
+      # - '--statistics': Agrupa problemas por tipo (cuántos de cada)
+
+      - name: Check code style
+        run: |
+          echo "Code style check with flake8 completed"
+          echo "========================================"
+          echo "All Python files have been verified"
+
+  # ===========================================================================
+  # JOB 2: TYPE-CHECK - Verificación de tipos y documentación
+  # ===========================================================================
+  # Este job es independiente del lint job. Se ejecutan en PARALELO.
+  # Verificamos dos cosas:
+  # 1. Que TODO módulo tenga docstring (función autodocumentada)
+  # 2. (Prepare para mypy si el proyecto crece)
+  type-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      # ====================================================================
+      # PASO 1: Verificación de Docstrings
+      # ====================================================================
+      # CONCEPTO: "Code Without Documentation is Unfinished Code"
+      #
+      # Un docstring es:
+      # def function_name():
+      #     """Esto es un docstring que explica qué hace la función."""
+      #     pass
+      #
+      # ¿POR QUÉ ES CRÍTICO?
+      # - Otros developers pueden entender el código SIN leer cada línea
+      # - Tools automáticas pueden generar documentación (Sphinx, pdoc)
+      # - IDEs usan docstrings para mostrar hints (autocomplete inteligente)
+      # - Previene que alguien rompea una función pensando que no hace nada
+      #
+      # EL SCRIPT ABAJO:
+      # 1. Camina recursivamente por 'src/'
+      # 2. Para cada archivo Python, usa Python's AST (Abstract Syntax Tree)
+      #    para encontrar clases y funciones
+      # 3. Verifica que CADA clase y función tenga docstring
+      #    (excepto __init__, que hereda del padre)
+      # 4. Si encuentra alguna sin docstring, IMPRIME un error
+      #
+      # RESULTADO:
+      # - Success: "✓ All modules have proper docstrings"
+      # - Failure: Lista de archivos con problemas (developer debe arreglar)
+      #
+      # NOTA: Este es un "soft fail" - Si docstrings faltan, el workflow SIGUE.
+      # En proyectos más grandes, esto bloqueará el PR.
+      - name: Check docstrings
+        run: |
+          echo "Verifying docstrings in all modules..."
+          python -c "
+import os
+import ast
+
+def check_docstrings(filepath):
+    """Verifica que todas las clases y funciones tengan docstring."""
+    with open(filepath, 'r', encoding='utf-8') as f:
+        try:
+            # AST = Abstract Syntax Tree = representación del código como árbol
+            tree = ast.parse(f.read())
+            # Recorre TODOS los nodos (clases, funciones, variables, etc)
+            for node in ast.walk(tree):
+                # Solo revisar definiciones de clase y función
+                if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                    # ast.get_docstring() obtiene el primer string (el docstring)
+                    # Si no existe docstring Y no es __init__ (método especial)
+                    # entonces retorna False (verificación falla)
+                    if not ast.get_docstring(node) and node.name != '__init__':
+                        return False
+        except SyntaxError:
+            # Si el archivo tiene sintaxis inválida, no puede parsearse
+            return False
+    return True
+
+src_dir = 'src'
+missing_docs = []
+
+# Recorre todos los archivos en src/
+for root, dirs, files in os.walk(src_dir):
+    for file in files:
+        if file.endswith('.py'):
+            filepath = os.path.join(root, file)
+            if not check_docstrings(filepath):
+                missing_docs.append(filepath)
+
+# Reporta resultados
+if missing_docs:
+    print('Files with missing docstrings:')
+    for f in missing_docs:
+        print(f'  - {f}')
+else:
+    print('✓ All modules have proper docstrings')
+          "
+
+# ================================================================================
+# RESUMEN: Cómo funciona el workflow de Calidad de Código
+# ================================================================================
+# 1. Developer hace push/PR
+# 2. GitHub Actions inicia DOS jobs en paralelo: lint y type-check
+# 3. Lint (flake8):
+#    - PRIMERA PASADA: Detecta errores críticos (E9, F63, F7, F82)
+#    - Si hay errores críticos: WORKFLOW FALLA, PR se bloquea
+#    - SEGUNDA PASADA: Detecta warnings (líneas largas, complejidad)
+#    - Los warnings se reportan pero no bloquean (--exit-zero)
+# 4. Type-check (docstrings):
+#    - Verifica que TODO esté documentado
+#    - Si faltan docstrings: Se reportan pero no bloquean (arquitectura flexible)
+# 5. Si AMBOS jobs pasan: "Code Quality Passed" aparece en el PR
+# 6. El PR puede mergearse solo si todo pasa (Testing AND Code Quality)
+#
+# BENEFICIO PEDAGÓGICO (Clase 6):
+# Los estudiantes comprenden que hay múltiples "capas" de calidad:
+# - Testing = ¿Funciona?
+# - Linting = ¿Está bien escrito?
+# - Type-checking = ¿Está documentado?
+# Juntos = "Definition of Done" = Código listo para producción
+# ===============================================================================
