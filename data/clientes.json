@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "nombre": "Juan Pérez García",
+    "email": "juan.perez@empresa.com",
+    "rfc": "PEGJ760512QRX",
+    "telefono": "5551234567",
+    "creado_en": "2024-01-15T10:30:00"
+  },
+  {
+    "id": 2,
+    "nombre": "María López Rodríguez",
+    "email": "maria.lopez@empresa.com",
+    "rfc": "LOPR850724HBA",
+    "telefono": "5559876543",
+    "creado_en": "2024-01-16T14:45:00"
+  },
+  {
+    "id": 3,
+    "nombre": "Carlos González Martínez",
+    "email": "carlos.gonzalez@empresa.com",
+    "rfc": "GOCM820518PRF",
+    "telefono": "5551112222",
+    "creado_en": "2024-01-17T09:15:00"
+  }
+]
